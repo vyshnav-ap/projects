@@ -1,6 +1,5 @@
 #include<stdio.h>
 union U
-
 {
     char data;
     strct S
