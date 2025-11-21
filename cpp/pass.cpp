@@ -9,7 +9,7 @@ void SWAP(int &ref1, int & ref2){
 int main(){
     int x,y;
     cout << "Enter  x and y : "; cin >> x >> y;
-    SWAP(x,y);
+    SWAP(x,y); // call by reference
     cout << "x = " << x << endl;
     cout << "y = " << y << endl;
 
