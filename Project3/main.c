@@ -1,121 +1,157 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
+#include "mp3.h"
 
-static uint32_t be32(const uint8_t *b) {
-    return (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3];
+
+
+void print_help()
+{
+    printf("--------------------------------------------------------------\n");
+    printf(" MP3 TAG READER AND EDITOR\n");
+    printf("--------------------------------------------------------------\n");
+    printf("USAGE:\n");
+    printf("  View Tags:\n");
+    printf("      ./a.out -v <filename.mp3>\n\n");
+    printf("  Edit Tags:\n");
+    printf("      ./a.out -e <option> \"text\" <filename.mp3>\n\n");
+    printf("OPTIONS:\n");
+    printf("   -t   Edit Title\n");
+    printf("   -a   Edit Artist\n");
+    printf("   -A   Edit Album\n");
+    printf("   -y   Edit Year\n");
+    printf("   -c   Edit Comment\n");
+    printf("   -m   Edit Track Number\n\n");
+    printf("   --help   Show Help\n");
+    printf("--------------------------------------------------------------\n");
 }
 
-static uint32_t syncsafe(const uint8_t *b) {
-    return ((b[0] & 0x7F) << 21) |
-           ((b[1] & 0x7F) << 14) |
-           ((b[2] & 0x7F) << 7)  |
-           (b[3] & 0x7F);
-}
 
-/* ID3v2.3 text decoding */
-static void decode_text(const uint8_t *data, uint32_t size, char *out, int outlen) {
-    if (size == 0) { out[0] = 0; return; }
 
-    uint8_t encoding = data[0];
-    const uint8_t *p = data + 1;
-    size--;
-
-    if (encoding == 0) {
-        /* ISO-8859-1 → copy directly */
-        int n = (size < outlen - 1) ? size : outlen - 1;
-        memcpy(out, p, n);
-        out[n] = 0;
-    } 
-    else if (encoding == 1) {
-        /* UTF-16 → skip BOM and copy low bytes (simple fallback) */
-        if (size < 2) { out[0] = 0; return; }
-
-        p += 2;  /* skip BOM FF FE or FE FF */
-        size -= 2;
-
-        int o = 0;
-        for (uint32_t i = 0; i + 1 < size && o < outlen - 1; i += 2)
-            out[o++] = p[i];  /* low byte only */
-
-        out[outlen - 1] = 0;
-    } 
-    else {
-        strcpy(out, "<unsupported-encoding>");
-    }
-}
-
-static void read_id3v23(const char *file) {
-    FILE *fp = fopen(file, "rb");
-    if (!fp) { puts("Cannot open file"); return; }
-
-    uint8_t hdr[10];
-    if (fread(hdr, 1, 10, fp) != 10) return;
-
-    if (memcmp(hdr, "ID3", 3) != 0) {
-        puts("No ID3 tag found");
-        fclose(fp);
-        return;
-    }
-
-    int version = hdr[3];
-    if (version != 3) {
-        printf("This file is ID3v2.%d, not v2.3\n", version);
-        fclose(fp);
-        return;
-    }
-
-    uint32_t tag_size = syncsafe(hdr + 6);
-
-    printf("=== ID3v2.3 Tag Found (%u bytes) ===\n", tag_size);
-
-    uint32_t pos = 0;
-    while (pos + 10 < tag_size) {
-        uint8_t fh[10];
-        fread(fh, 1, 10, fp);
-        pos += 10;
-
-        if (fh[0] == 0) break; // padding
-
-        char id[5];
-        memcpy(id, fh, 4);
-        id[4] = 0;
-
-        uint32_t size = be32(fh + 4);
-
-        if (size == 0) break;
-        if (pos + size > tag_size) break;
-
-        uint8_t *buf = malloc(size);
-        fread(buf, 1, size, fp);
-        pos += size;
-
-        char out[1024] = {0};
-
-        if (id[0] == 'T') {
-            decode_text(buf, size, out, sizeof(out));
-
-            if (strcmp(id, "TIT2") == 0) printf("Title : %s\n", out);
-            if (strcmp(id, "TPE1") == 0) printf("Artist: %s\n", out);
-            if (strcmp(id, "TALB") == 0) printf("Album : %s\n", out);
-            if (strcmp(id, "TYER") == 0) printf("Year  : %s\n", out);
-            if (strcmp(id, "TRCK") == 0) printf("Track : %s\n", out);
-            if (strcmp(id, "TCON") == 0) printf("Genre : %s\n", out);
-        }
-
-        free(buf);
-    }
-
-    fclose(fp);
-}
-
-int main(int argc, char **argv) {
+int main(int argc, char *argv[])
+{
     if (argc < 2) {
-        printf("Usage: %s file.mp3\n", argv[0]);
+        print_help();
         return 1;
     }
 
-    read_id3v23(argv[1]);
-    return 0;
+    // ---------------------------
+    // Handle --help
+    // ---------------------------
+    if (strcmp(argv[1], "--help") == 0) {
+        print_help();
+        return 0;
+    }
+
+    // ---------------------------
+    // Handle View Tag: -v file.mp3
+    // ---------------------------
+    if (strcmp(argv[1], "-v") == 0)
+    {
+        if (argc < 3) {
+            printf("ERROR: Missing filename.\n");
+            printf("Usage: ./a.out -v file.mp3\n");
+            return 1;
+        }
+
+        mp3_view(argv[2]);
+        return 0;
+    }
+
+    // ---------------------------
+    // Handle Edit Options
+    // Format: ./a.out -e -t  "NEW TITLE"  file.mp3
+    // ---------------------------
+    if (strcmp(argv[1], "-e") == 0)
+    {
+        if (argc < 5) {
+            printf("ERROR: Not enough arguments for edit operation.\n");
+            printf("Usage: ./a.out -e -t/-a/-A/-m/-y/-c \"text\" file.mp3\n");
+            return 1;
+        }
+
+        char *operation = argv[2];
+        char *text = argv[3];
+        char *filename = argv[4];
+
+        if (strcmp(operation, "-t") == 0)
+            mp3_edit_title(text, filename);
+
+        else if (strcmp(operation, "-a") == 0)
+            mp3_edit_artist(text, filename);
+
+        else if (strcmp(operation, "-A") == 0)
+            mp3_edit_album(text, filename);
+
+        else if (strcmp(operation, "-y") == 0)
+            mp3_edit_year(text, filename);
+
+        else if (strcmp(operation, "-c") == 0)
+            mp3_edit_comment(text, filename);
+
+        else if (strcmp(operation, "-m") == 0)
+            mp3_edit_track(text, filename);
+
+        else {
+            printf("ERROR: Invalid edit option: %s\n", operation);
+            print_help();
+        }
+
+        return 0;
+    }
+
+    // ---------------------------
+    // Invalid argument
+    // ---------------------------
+    printf("ERROR: Invalid argument!\n");
+    print_help();
+    return 1;
 }
+
+
+// ------------------------------------------------
+// Function Implementations
+// ------------------------------------------------
+
+void mp3_view(const char *filename)
+{
+    mp3tag_reader(filename);
+}
+
+void mp3_edit_title(const char *text, const char *filename)
+{
+    printf("Editing TITLE...\n");
+    edit_text_frame(filename, "TIT2", text);
+}
+
+void mp3_edit_artist(const char *text, const char *filename)
+{
+    printf("Editing ARTIST...\n");
+    edit_text_frame(filename, "TPE1", text);
+}
+
+void mp3_edit_album(const char *text, const char *filename)
+{
+    printf("Editing ALBUM...\n");
+    edit_text_frame(filename, "TALB", text);
+}
+
+void mp3_edit_year(const char *text, const char *filename)
+{
+    printf("Editing YEAR...\n");
+    edit_text_frame(filename, "TYER", text);
+}
+
+void mp3_edit_comment(const char *text, const char *filename)
+{
+    printf("Editing COMMENT...\n");
+    edit_text_frame(filename, "COMM", text);
+}
+
+void mp3_edit_track(const char *text, const char *filename)
+{
+    printf("Editing TRACK NUMBER...\n");
+    edit_text_frame(filename, "TRCK", text);
+}
+
+
+
